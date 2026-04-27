@@ -164,7 +164,7 @@ def render(df: pd.DataFrame, selected_term: str):
         if len(r_val) > 0:
             col1, col2 = st.columns(2)
             col1.metric("Pearson r", f"{r_val[0]:+.4f}")
-            col2.metric("p-value", f"{p_val[0]:.4f}",
+            col2.metric("p-value", f"{p_val[0]:.2e}",
                         delta="significativo" if p_val[0] < 0.05 else "não significativo",
                         delta_color="normal" if p_val[0] < 0.05 else "off")
 
