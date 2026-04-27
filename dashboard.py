@@ -6,6 +6,8 @@ import networkx as nx
 import psycopg2
 from scipy.spatial.distance import cosine
 import os
+import tab_correlacao
+
 
 DB_CONFIG = {
     'host': os.environ['DB_HOST'],
@@ -47,7 +49,7 @@ st.sidebar.dataframe(term_counts.head(15))
 selected_term = st.sidebar.selectbox("🎯 Selecione um Termo para Analisar:", term_counts.index.tolist())
 
 # --- ABAS DA INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["📈 Análise Temporal", "🕸️ Grafo de Co-ocorrência (2 Camadas)", "🧬 Evolução Semântica (Cosine)"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Análise Temporal", "🕸️ Grafo de Co-ocorrência (2 Camadas)", "🧬 Evolução Semântica (Cosine)", "📈 Correlação Temporal"])
 
 # ABA 1: TENDÊNCIA TEMPORAL
 with tab1:
@@ -157,3 +159,7 @@ with tab3:
                 st.success("Estabilidade média.")
     else:
         st.info("Patentes em apenas 1 mês. Necessário mais dados temporais para calcular evolução.")
+
+
+with tab4:
+    tab_correlacao.render(df, selected_term)
