@@ -65,10 +65,6 @@ def render(df: pd.DataFrame, selected_term: str):
     st.markdown("""
     Mede se dois termos crescem e decaem **juntos ao longo do tempo** usando
     correlação de Pearson sobre as séries mensais de frequência.
-
-    Diferente da co-ocorrência (que olha dentro da mesma patente), aqui detectamos
-    tecnologias que seguem **trajetórias paralelas** — podem nem aparecer juntas,
-    mas surgem e crescem no mesmo período.
     """)
 
     if df.empty:
@@ -227,5 +223,4 @@ def render(df: pd.DataFrame, selected_term: str):
         | < 0 | Anticorrelação — um cresce quando o outro cai |
 
         O **p-value** indica se o resultado é estatisticamente significativo.
-        Com apenas {len(months)} meses de dados, p < 0.05 é um bom critério mínimo.
         """)
