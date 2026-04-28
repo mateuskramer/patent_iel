@@ -5,3 +5,7 @@ psycopg2-binary
 networkx
 scipy
 scikit-learn
+numpy
+crewai
+tenacity
+sentence-transformers
