@@ -8,6 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import processador
 import os
+import tab_correlacao
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -170,7 +171,7 @@ sel_term = st.sidebar.selectbox("Termo:", terms_df["term"].value_counts().index.
 depth = st.sidebar.slider("Camadas rede", 1, 5, 3)
 
 st.title("🔬 Patent AI Explorer")
-tabs = st.tabs(["📐 Similaridade", "📈 Tendência", "🕸 Rede", "🧬 Evolução", "🚀 Indicadores", "🔥 Correlação", "🏆 Ranking", "🌌 Esparsos"])
+tabs = st.tabs(["📐 Similaridade", "📈 Tendência", "🕸 Rede", "🧬 Evolução", "🚀 Indicadores", "🔥 Correlação", "📈 Correlação Temporal", "🏆 Ranking", "🌌 Esparsos"])
 
 with tabs[0]:
     st.dataframe(similar_patents(sel_idx)[["id", "title", "year_month", "similarity"]], use_container_width=True)
@@ -241,8 +242,11 @@ with tabs[5]:
     * **Jaccard:** Percentual de sobreposição entre os dois termos (0 a 1).
     * **PMI (Pointwise Mutual Information):** Mede a dependência estatística. Valores altos indicam que os termos são fortemente ligados no vocabulário técnico.
     """)
-
+    
 with tabs[6]:
+    tab_correlacao.render(terms_df, selected_term)
+
+with tabs[7]:
     st.markdown("### Ranking de Tecnologias Emergentes")
     rk = ranking_table(); st.dataframe(rk, use_container_width=True)
     
@@ -255,7 +259,7 @@ with tabs[6]:
     *Use este ranking para identificar para onde o investimento e a pesquisa estão migrando.*
     """)
 
-with tabs[7]:
+with tabs[8]:
     st.markdown("### Associações Esparsas (Oportunidades Invisíveis)")
     sparse = sparse_associations(sel_term)
     if not sparse.empty:
