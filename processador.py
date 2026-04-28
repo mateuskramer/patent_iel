@@ -50,7 +50,7 @@ SMART_DICTIONARY = {
     "Maintenance & Quality": ["maintenance", "predictive", "inspection", "vision system", "testing", "calibration"]
 }
 
-my_llm = LLM(model='gemini/gemini-2.5-flash', api_key=os.getenv("GEMINI_API_KEY"), temperature=1.0)
+
 
 @retry(
     stop=stop_after_attempt(3), 
@@ -61,6 +61,8 @@ def kickoff_with_retry(crew):
     return crew.kickoff()
 
 def processar_local():
+    my_llm = LLM(model='gemini/gemini-2.5-flash', api_key=os.getenv("GEMINI_API_KEY"), temperature=1.0)
+    
     conn = psycopg2.connect(**LOCAL_DB_CONFIG)
     cur = conn.cursor(cursor_factory=extras.DictCursor)
 
