@@ -1,13 +1,17 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import psycopg2
+import json
+import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
-import networkx as nx
-import psycopg2
-from scipy.spatial.distance import cosine
 import os
-import tab_correlacao
 
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial.distance import cosine
+
+import tab_correlacao
 
 DB_CONFIG = {
     'host': os.environ['DB_HOST'],
@@ -21,145 +25,370 @@ DB_CONFIG = {
 st.set_page_config(page_title="Patent AI Lab", layout="wide")
 
 @st.cache_data
-def load_data():
+def load_patents():
     conn = psycopg2.connect(**DB_CONFIG)
     query = """
-        SELECT p.year_month, p.id as patent_id, td.term, td.id as term_id
+        SELECT id, title, abstract, year_month, embedding
+        FROM patents
+        WHERE embedding IS NOT NULL AND embedding <> ''
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    df["title"] = df["title"].fillna("")
+    df["abstract"] = df["abstract"].fillna("")
+    df["year_month"] = df["year_month"].astype(str)
+    df["embedding"] = df["embedding"].apply(
+        lambda x: np.array(json.loads(x), dtype=np.float32)
+    )
+    return df.reset_index(drop=True)
+
+@st.cache_data
+def load_terms():
+    conn = psycopg2.connect(**DB_CONFIG)
+    query = """
+        SELECT p.id AS patent_id, p.year_month, td.term
         FROM patent_terms pt
-        JOIN patents p ON pt.patent_id = p.id
-        JOIN term_dictionary td ON pt.term_id = td.id
+        JOIN patents p ON pt.patent_id::text = p.id::text
+        JOIN term_dictionary td ON td.id = pt.term_id
         WHERE p.year_month IS NOT NULL
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
+    df["year_month"] = df["year_month"].astype(str)
     return df
 
-df = load_data()
+df = load_patents()
+terms_df = load_terms()
 
 if df.empty:
-    st.warning("O banco de dados está vazio. Rode o script de ingestão primeiro!")
+    st.warning("Nenhum embedding encontrado.")
     st.stop()
 
-# --- SIDEBAR: Escolha do Termo ---
-st.sidebar.title("🎛️ Controle de Análise")
-term_counts = df['term'].value_counts()
-st.sidebar.write("### 📊 Top Termos Mais Densos")
-st.sidebar.dataframe(term_counts.head(15))
+EMB = np.vstack(df["embedding"].values)
 
-selected_term = st.sidebar.selectbox("🎯 Selecione um Termo para Analisar:", term_counts.index.tolist())
+def similar_patents(idx, top_n=10):
+    vec = EMB[idx].reshape(1, -1)
+    sims = cosine_similarity(vec, EMB)[0]
+    out = df.copy()
+    out["similarity"] = sims
+    out = out[out.index != idx]
+    return out.sort_values("similarity", ascending=False).head(top_n)
 
-# --- ABAS DA INTERFACE ---
-tab1, tab2, tab3, tab4 = st.tabs(["📈 Análise Temporal", "🕸️ Grafo de Co-ocorrência (2 Camadas)", "🧬 Evolução Semântica (Cosine)", "📈 Correlação Temporal"])
+def monthly_term_count(term):
+    x = terms_df[terms_df["term"] == term]
+    return (
+        x.groupby("year_month")
+        .size()
+        .reset_index(name="count")
+        .sort_values("year_month")
+    )
 
-# ABA 1: TENDÊNCIA TEMPORAL
-with tab1:
-    st.subheader(f"Evolução de '{selected_term}' ao longo do tempo")
-    df_term = df[df['term'] == selected_term]
-    temporal_data = df_term.groupby('year_month').size().reset_index(name='occurrences')
-    temporal_data = temporal_data.sort_values('year_month')
-    
-    fig = px.line(temporal_data, x='year_month', y='occurrences', markers=True, 
-                  title=f"Frequência de '{selected_term}' (2024+)",
-                  line_shape='spline', template='plotly_dark')
+def semantic_vector(term, month):
+    dfm = terms_df[terms_df["year_month"] == month]
+    patents = dfm[dfm["term"] == term]["patent_id"].unique()
+    co = dfm[dfm["patent_id"].isin(patents)]
+    vec = co["term"].value_counts()
+    all_terms = terms_df["term"].unique()
+    full = pd.Series(0, index=all_terms)
+    full.update(vec)
+    return full.values
+
+def build_graph(root_term, depth=3, top_n=5):
+    G = nx.Graph()
+    G.add_node(root_term, layer=0)
+    frontier = [(root_term, 0)]
+    visited = set()
+
+    while frontier:
+        current, level = frontier.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
+        if level >= depth:
+            continue
+        patents = terms_df[terms_df["term"] == current]["patent_id"].unique()
+        co = terms_df[
+            (terms_df["patent_id"].isin(patents)) &
+            (terms_df["term"] != current)
+        ]
+        top_terms = co["term"].value_counts().head(top_n).index.tolist()
+        for t in top_terms:
+            if not G.has_node(t):
+                G.add_node(t, layer=level + 1)
+            G.add_edge(current, t)
+            frontier.append((t, level + 1))
+    return G
+
+def calc_growth(term):
+    m = monthly_term_count(term)
+    if len(m) < 2:
+        return 0
+    prev = m.iloc[-2]["count"]
+    curr = m.iloc[-1]["count"]
+    if prev == 0:
+        return 0
+    return ((curr - prev) / prev) * 100
+
+def calc_density(term):
+    return len(terms_df[terms_df["term"] == term]["patent_id"].unique())
+
+def calc_fusion(term):
+    patents = terms_df[terms_df["term"] == term]["patent_id"].unique()
+    co = terms_df[
+        (terms_df["patent_id"].isin(patents)) &
+        (terms_df["term"] != term)
+    ]
+    return co["term"].nunique()
+
+def calc_shift(term):
+    months = sorted(terms_df["year_month"].unique().tolist())
+    if len(months) < 2:
+        return 0
+    v1 = semantic_vector(term, months[0])
+    v2 = semantic_vector(term, months[-1])
+    if v1.sum() == 0 or v2.sum() == 0:
+        return 0
+    sim = 1 - cosine(v1, v2)
+    return (1 - sim) * 100
+
+def calc_future_score(term):
+    score = (
+        0.35 * min(max(calc_growth(term), 0), 100) +
+        0.25 * min(calc_fusion(term) * 5, 100) +
+        0.20 * min(calc_shift(term), 100) +
+        0.20 * min(calc_density(term), 100)
+    )
+    return round(score, 2)
+
+def term_correlations(term):
+    total = terms_df["patent_id"].nunique()
+    patents_a = set(terms_df[terms_df["term"] == term]["patent_id"].unique())
+    others = terms_df[terms_df["term"] != term]["term"].unique()
+    rows = []
+    for other in others:
+        patents_b = set(terms_df[terms_df["term"] == other]["patent_id"].unique())
+        inter = patents_a & patents_b
+        if len(inter) == 0:
+            continue
+        union = len(patents_a | patents_b)
+        pa = len(patents_a) / total
+        pb = len(patents_b) / total
+        pab = len(inter) / total
+        lift = pab / (pa * pb) if pa * pb > 0 else 0
+        jaccard = len(inter) / union if union > 0 else 0
+        pmi = np.log2(pab / (pa * pb)) if pab > 0 else 0
+        rows.append({
+            "term": other,
+            "cooc": len(inter),
+            "lift": round(lift, 4),
+            "jaccard": round(jaccard, 4),
+            "pmi": round(pmi, 4)
+        })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values("lift", ascending=False)
+
+def sparse_associations(term):
+    patents_a = set(terms_df[terms_df["term"] == term]["patent_id"].unique())
+    if not patents_a:
+        return pd.DataFrame()
+    neighbors_a = set(terms_df[terms_df["patent_id"].isin(patents_a)]["term"].unique())
+    neighbors_a.discard(term)
+    len_a = len(neighbors_a)
+    if len_a == 0:
+        return pd.DataFrame()
+    patents_with_neighbors = terms_df[terms_df["term"].isin(neighbors_a)]["patent_id"].unique()
+    potential_terms = set(terms_df[terms_df["patent_id"].isin(patents_with_neighbors)]["term"].unique())
+    potential_terms.discard(term)
+    rows = []
+    for other in potential_terms:
+        patents_b = set(terms_df[terms_df["term"] == other]["patent_id"].unique())
+        if len(patents_a & patents_b) > 0:
+            continue
+        neighbors_b = set(terms_df[terms_df["patent_id"].isin(patents_b)]["term"].unique())
+        neighbors_b.discard(other)
+        len_b = len(neighbors_b)
+        if len_b == 0:
+            continue
+        shared_neighbors = neighbors_a & neighbors_b
+        len_shared = len(shared_neighbors)
+        if len_shared == 0:
+            continue
+        union_neighbors = len_a + len_b - len_shared
+        context_jaccard = len_shared / union_neighbors if union_neighbors > 0 else 0
+        context_cosine = len_shared / (np.sqrt(len_a) * np.sqrt(len_b))
+        rows.append({
+            "term": other,
+            "shared_neighbors": len_shared,
+            "context_jaccard": round(context_jaccard, 4),
+            "context_cosine": round(context_cosine, 4)
+        })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values("context_cosine", ascending=False)
+
+@st.cache_data
+def ranking_table():
+    terms = terms_df["term"].value_counts().index.tolist()
+    rows = []
+    for t in terms[:300]:
+        rows.append({
+            "term": t,
+            "growth_%": round(calc_growth(t), 2),
+            "density": calc_density(t),
+            "fusion": calc_fusion(t),
+            "shift_%": round(calc_shift(t), 2),
+            "future_score": calc_future_score(t)
+        })
+    return pd.DataFrame(rows).sort_values("future_score", ascending=False)
+
+# --- SIDEBAR ---
+st.sidebar.title("🧠 Patent AI")
+
+selected_idx = st.sidebar.selectbox(
+    "Escolha uma patente:",
+    df.index,
+    format_func=lambda x: f"{df.loc[x,'id']} - {df.loc[x,'title'][:55]}"
+)
+
+selected_term = st.sidebar.selectbox(
+    "Escolha um termo:",
+    terms_df["term"].value_counts().index.tolist()
+)
+
+depth = st.sidebar.slider("Camadas da rede", 1, 5, 3)
+
+base = df.loc[selected_idx]
+
+st.title("🧠 Patent AI Lab")
+st.markdown(f"### {base['title']}")
+st.write(f"Patente ID: {base['id']}")
+
+with st.expander("Ver Abstract"):
+    st.write(base["abstract"])
+
+# --- ABAS ---
+tabs = st.tabs([
+    "📐 Similaridade",
+    "📈 Tendência",
+    "🕸 Rede",
+    "🧬 Evolução",
+    "🚀 Indicadores",
+    "🔥 Correlação",
+    "📈 Correlação Temporal",
+    "🏆 Ranking",
+    "🌌 Esparsos"
+])
+
+with tabs[0]:
+    sim = similar_patents(selected_idx)
+    st.dataframe(sim[["id", "title", "year_month", "similarity"]], use_container_width=True)
+
+with tabs[1]:
+    trend = monthly_term_count(selected_term)
+    fig = px.line(trend, x="year_month", y="count", markers=True, template="plotly_dark")
     st.plotly_chart(fig, use_container_width=True)
 
-# ABA 2: GRAFO DE PROFUNDIDADE (2 CAMADAS)
-with tab2:
-    st.subheader(f"Ecossistema de Tecnologias ao redor de '{selected_term}'")
-    depth_level = st.slider("Camadas de Profundidade", 1, 2, 2)
-    top_n_connections = st.slider("Máx Conexões por Termo", 2, 10, 5)
-    
-    G = nx.Graph()
-    G.add_node(selected_term, size=30, color='red')
-    
-    # Camada 1
-    patents_with_term = df[df['term'] == selected_term]['patent_id'].unique()
-    co_terms_l1 = df[(df['patent_id'].isin(patents_with_term)) & (df['term'] != selected_term)]
-    top_l1 = co_terms_l1['term'].value_counts().head(top_n_connections).index.tolist()
-    
-    for t in top_l1:
-        weight = len(co_terms_l1[co_terms_l1['term'] == t])
-        G.add_node(t, size=20, color='orange')
-        G.add_edge(selected_term, t, weight=weight)
-        
-        # Camada 2
-        if depth_level == 2:
-            patents_l2 = df[df['term'] == t]['patent_id'].unique()
-            co_terms_l2 = df[(df['patent_id'].isin(patents_l2)) & (~df['term'].isin([selected_term, t]))]
-            top_l2 = co_terms_l2['term'].value_counts().head(top_n_connections - 2).index.tolist()
-            
-            for t2 in top_l2:
-                weight2 = len(co_terms_l2[co_terms_l2['term'] == t2])
-                G.add_node(t2, size=10, color='lightblue')
-                G.add_edge(t, t2, weight=weight2)
-
-    pos = nx.spring_layout(G, k=0.5, iterations=50)
+with tabs[2]:
+    G = build_graph(selected_term, depth, 5)
+    pos = nx.spring_layout(G, k=0.8)
     edge_x, edge_y = [], []
-    for edge in G.edges():
-        x0, y0 = pos[edge[0]]; x1, y1 = pos[edge[1]]
-        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-        
-    edge_trace = go.Scatter(x=edge_x, y=edge_y, line=dict(width=1, color='#888'), hoverinfo='none', mode='lines')
-    
-    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
-    for node in G.nodes():
-        x, y = pos[node]
-        node_x.append(x); node_y.append(y); node_text.append(node)
-        node_color.append(G.nodes[node]['color']); node_size.append(G.nodes[node]['size'])
-        
+    for e in G.edges():
+        x0, y0 = pos[e[0]]; x1, y1 = pos[e[1]]
+        edge_x += [x0, x1, None]; edge_y += [y0, y1, None]
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, mode="lines", line=dict(width=1))
+    node_x, node_y, labels, colors, sizes = [], [], [], [], []
+    for n in G.nodes():
+        x, y = pos[n]
+        node_x.append(x); node_y.append(y); labels.append(n)
+        layer = G.nodes[n]["layer"]
+        colors.append(["red","orange","lightblue","green"][min(layer,3)] if layer < 4 else "gray")
+        sizes.append(max(12, 30 - layer * 3))
     node_trace = go.Scatter(
-        x=node_x, y=node_y, mode='markers+text', text=node_text, textposition="top center",
-        marker=dict(size=node_size, color=node_color, line=dict(width=2, color='white')))
-    
-    fig_net = go.Figure(data=[edge_trace, node_trace],
-             layout=go.Layout(showlegend=False, hovermode='closest', margin=dict(b=0,l=0,r=0,t=0),
-                              xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                              yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                              plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)'))
-    st.plotly_chart(fig_net, use_container_width=True)
+        x=node_x, y=node_y, mode="markers+text", text=labels,
+        textposition="top center", marker=dict(size=sizes, color=colors)
+    )
+    fig = go.Figure(data=[edge_trace, node_trace])
+    fig.update_layout(template="plotly_dark")
+    st.plotly_chart(fig, use_container_width=True)
+    st.info("""
+🔴 Vermelho = termo principal selecionado  
+🟠 Laranja = conexões diretas (1ª camada)  
+🔵 Azul = conexões secundárias (2ª camada)  
+🟢 Verde = conexões terciárias (3ª camada)  
+⚪ Cinza = camadas profundas  
+Tamanho maior = nó mais central
+""")
 
-# ABA 3: EVOLUÇÃO SEMÂNTICA VIA COSINE SIMILARITY
-with tab3:
-    st.subheader(f"Evolução do Contexto Semântico de '{selected_term}'")
-    st.markdown("""
-    *Como o significado/uso do termo muda com o tempo?* Calculamos o **Vetor de Co-ocorrência** do termo em dois meses distintos e usamos Similaridade de Cosseno.
-    1.0 = Contexto exato igual | 0.0 = Contextos completamente diferentes.
-    """)
-    
-    meses_disponiveis = sorted(df['year_month'].unique().tolist())
-    if len(meses_disponiveis) >= 2:
-        col1, col2 = st.columns(2)
-        m1 = col1.selectbox("Mês de Referência (A):", meses_disponiveis, index=0)
-        m2 = col2.selectbox("Mês de Comparação (B):", meses_disponiveis, index=len(meses_disponiveis)-1)
-        
-        def get_semantic_vector(term, month, df_full):
-            df_month = df_full[df_full['year_month'] == month]
-            patents_w_term = df_month[df_month['term'] == term]['patent_id'].unique()
-            co_occurrences = df_month[df_month['patent_id'].isin(patents_w_term)]
-            vector_series = co_occurrences['term'].value_counts()
-            all_terms = df_full['term'].unique()
-            vector = pd.Series(0, index=all_terms)
-            vector.update(vector_series)
-            return vector.values
+with tabs[3]:
+    months = sorted(terms_df["year_month"].unique().tolist())
+    if len(months) >= 2:
+        c1, c2 = st.columns(2)
+        m1 = c1.selectbox("Mês A", months)
+        m2 = c2.selectbox("Mês B", months, index=len(months)-1)
+        v1 = semantic_vector(selected_term, m1)
+        v2 = semantic_vector(selected_term, m2)
+        if v1.sum() > 0 and v2.sum() > 0:
+            sim = 1 - cosine(v1, v2)
+            st.metric("Similaridade", f"{sim:.4f}")
+            st.metric("Shift %", f"{(1-sim)*100:.2f}")
 
-        vec1 = get_semantic_vector(selected_term, m1, df)
-        vec2 = get_semantic_vector(selected_term, m2, df)
-        
-        if sum(vec1) == 0 or sum(vec2) == 0:
-            st.warning(f"O termo '{selected_term}' não possui ocorrências suficientes em um dos meses selecionados para comparação.")
-        else:
-            sim = 1 - cosine(vec1, vec2)
-            st.metric(label=f"Similaridade Semântica ({m1} vs {m2})", value=f"{sim:.4f}")
-            
-            if sim > 0.8:
-                st.info("💡 Alta similaridade: O termo está sendo usado junto com as mesmas tecnologias de antes.")
-            elif sim < 0.4:
-                st.warning("⚠️ Baixa similaridade: O termo sofreu um Shift Semântico! Está sendo aplicado a novas tecnologias agora.")
-            else:
-                st.success("Estabilidade média.")
+with tabs[4]:
+    c1, c2, c3 = st.columns(3)
+    c4, c5 = st.columns(2)
+    c1.metric("Growth %", f"{calc_growth(selected_term):.2f}")
+    c2.metric("Density", calc_density(selected_term))
+    c3.metric("Fusion", calc_fusion(selected_term))
+    c4.metric("Shift %", f"{calc_shift(selected_term):.2f}")
+    c5.metric("Future Score", calc_future_score(selected_term))
+    st.info("""
+**Growth %** → crescimento de uso do termo no último mês.  
+**Density** → quantidade de patentes contendo o termo.  
+**Fusion** → número de tecnologias conectadas ao termo.  
+**Shift %** → mudança semântica ao longo do tempo.  
+**Future Score** → score geral de potencial futuro.
+""")
+
+with tabs[5]:
+    corr = term_correlations(selected_term)
+    st.dataframe(corr.head(20), use_container_width=True)
+    fig = px.bar(corr.head(15), x="term", y="lift", color="jaccard", template="plotly_dark")
+    st.plotly_chart(fig, use_container_width=True)
+    st.info("""
+**cooc** → número de patentes onde os dois termos aparecem juntos.  
+**lift** → força real da associação. >1 indica forte relação.  
+**jaccard** → percentual de sobreposição entre conjuntos.  
+**pmi** → relevância estatística entre termos raros/específicos.
+""")
+
+with tabs[6]:
+    tab_correlacao.render(terms_df, selected_term)
+
+with tabs[7]:
+    rank = ranking_table()
+    st.dataframe(rank, use_container_width=True)
+    fig = px.bar(rank.head(15), x="term", y="future_score", template="plotly_dark")
+    st.plotly_chart(fig, use_container_width=True)
+
+with tabs[8]:
+    st.markdown("### Associações Indiretas (Termos que não coocorrem)")
+    with st.spinner("Calculando conexões esparsas..."):
+        sparse = sparse_associations(selected_term)
+    if sparse.empty:
+        st.warning("Nenhuma associação esparsa com contexto compartilhado encontrada para este termo.")
     else:
-        st.info("Patentes em apenas 1 mês. Necessário mais dados temporais para calcular evolução.")
-
-
-with tab4:
-    tab_correlacao.render(df, selected_term)
+        st.dataframe(sparse.head(20), use_container_width=True)
+        fig_sparse = px.bar(
+            sparse.head(15), x="term", y="context_cosine",
+            color="context_jaccard", template="plotly_dark",
+            title="Top Termos Esparsos (por Similaridade de Cosseno)"
+        )
+        st.plotly_chart(fig_sparse, use_container_width=True)
+        st.info("""
+**shared_neighbors** → Quantidade de termos em comum que coocorrem com ambos (ecossistema compartilhado).  
+**context_jaccard** → Similaridade de sobreposição entre os ecossistemas dos dois termos.  
+**context_cosine** → Similaridade de cosseno baseada no contexto.
+""")
