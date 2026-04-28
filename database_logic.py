@@ -7,6 +7,9 @@ import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
 import processador
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy.spatial.distance import cosine
