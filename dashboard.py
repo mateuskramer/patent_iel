@@ -244,7 +244,7 @@ with tabs[5]:
     """)
     
 with tabs[6]:
-    tab_correlacao.render(terms_df, selected_term)
+    tab_correlacao.render(terms_df, sel_term)
 
 with tabs[7]:
     st.markdown("### Ranking de Tecnologias Emergentes")
