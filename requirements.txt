@@ -6,7 +6,7 @@ networkx
 scipy
 scikit-learn
 numpy
-crewai
 tenacity
 sentence-transformers
 google-generativeai
+crewai==0.28.0
