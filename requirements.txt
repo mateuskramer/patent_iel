@@ -9,3 +9,4 @@ numpy
 crewai
 tenacity
 sentence-transformers
+google-generativeai
