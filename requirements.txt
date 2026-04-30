@@ -9,4 +9,4 @@ numpy
 tenacity
 sentence-transformers
 google-generativeai
-crewai==0.28.0
+crewai>=0.80.0
