@@ -9,4 +9,5 @@ numpy
 tenacity
 sentence-transformers
 google-generativeai
+google-genai
 crewai>=0.80.0
