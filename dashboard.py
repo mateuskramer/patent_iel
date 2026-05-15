@@ -27,7 +27,7 @@ DB_CONFIG = {
     "user":     os.environ["DB_USER"],
     "password": os.environ["DB_PASS"],
     "port":     int(os.environ.get("DB_PORT", 5432)),
-    "sslmode":  "disable",
+    "sslmode":  "require",
 }
 
 st.set_page_config(page_title="Patent AI Lab", layout="wide")
