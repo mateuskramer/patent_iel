@@ -412,15 +412,38 @@ with tabs[0]:
 
 # ── Tab 1: Tendência ─────────────────────────────────────────
 with tabs[1]:
-    st.markdown(f"### Histórico de Frequência: {sel_term}")
-    st.plotly_chart(
-        px.line(
-            monthly_term_count(sel_term, terms_df),
-            x="year_month", y="count",
-            markers=True, template="plotly_dark",
-        ),
-        use_container_width=True,
+    all_terms_list = terms_df["term"].value_counts().index.tolist()
+    selected_terms = st.multiselect(
+        "Selecione até 3 termos para comparar:",
+        options=all_terms_list,
+        default=[sel_term],
+        max_selections=3,
+        key="tendencia_multiselect",
     )
+
+    if selected_terms:
+        fig_tend = go.Figure()
+        colors = ["#636EFA", "#EF553B", "#00CC96"]
+        for i, term in enumerate(selected_terms):
+            df_term = monthly_term_count(term, terms_df)
+            fig_tend.add_trace(go.Scatter(
+                x=df_term["year_month"],
+                y=df_term["count"],
+                name=term,
+                mode="lines+markers",
+                line=dict(color=colors[i], width=2),
+                marker=dict(size=6),
+            ))
+        fig_tend.update_layout(
+            template="plotly_dark",
+            xaxis_title="Mês",
+            yaxis_title="Ocorrências mensais",
+            hovermode="x unified",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_tend, use_container_width=True)
+    else:
+        st.info("Selecione ao menos um termo.")
 
 # ── Tab 2: Rede ──────────────────────────────────────────────
 with tabs[2]:
