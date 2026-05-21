@@ -511,9 +511,14 @@ with tabs[3]:
 with tabs[4]:
     st.markdown("### Métricas de Maturidade e Impacto")
 
-    terms_indicadores = st.session_state.get("selected_terms", [sel_term])
-    if not terms_indicadores:
-        terms_indicadores = [sel_term]
+    all_terms_list_4 = terms_df["term"].value_counts().index.tolist()
+    terms_indicadores = st.multiselect(
+        "Selecione até 3 termos:",
+        options=all_terms_list_4,
+        default=[sel_term],
+        max_selections=3,
+        key="indicadores_multiselect",
+    )
 
     colors_ind = ["#636EFA", "#EF553B", "#00CC96"]
     indicadores = ["Growth %", "Density", "Fusion", "Shift %", "Future Score"]
@@ -562,7 +567,14 @@ with tabs[4]:
 with tabs[5]:
     st.markdown("### Análise Estatística de Correlação")
 
-    terms_corr = st.session_state.get("selected_terms", [sel_term])
+    all_terms_list_5 = terms_df["term"].value_counts().index.tolist()
+    terms_corr = st.multiselect(
+        "Selecione até 3 termos:",
+        options=all_terms_list_5,
+        default=[sel_term],
+        max_selections=3,
+        key="corr_lift_multiselect",
+    )
     if not terms_corr:
         terms_corr = [sel_term]
 
@@ -579,6 +591,7 @@ with tabs[5]:
                     title=f"Lift — {term}",
                 ),
                 use_container_width=True,
+                key=f"corr_lift_chart_{i}",
             )
         else:
             st.info(f"Sem correlações para '{term}'.")
@@ -595,7 +608,15 @@ with tabs[5]:
 
 # ── Tab 6: Correlação Temporal (Pearson) ─────────────────────
 with tabs[6]:
-    tab_correlacao.render(terms_df, st.session_state.get("selected_terms", [sel_term]))
+    all_terms_list_6 = terms_df["term"].value_counts().index.tolist()
+    terms_temporal = st.multiselect(
+        "Selecione até 3 termos:",
+        options=all_terms_list_6,
+        default=[sel_term],
+        max_selections=3,
+        key="corr_temporal_multiselect",
+    )
+    tab_correlacao.render(terms_df, terms_temporal if terms_temporal else [sel_term])
 
 # ── Tab 7: Ranking ───────────────────────────────────────────
 with tabs[7]:
