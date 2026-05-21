@@ -121,7 +121,7 @@ def render(df: pd.DataFrame, selected_terms):
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    st.plotly_chart(fig_series, use_container_width=True)
+    st.plotly_chart(fig_series, use_container_width=True, key="corr_series")
 
     # -----------------------------------------------------------------------
     # SEÇÃO 2: Matriz de correlação entre os termos selecionados
@@ -187,7 +187,7 @@ def render(df: pd.DataFrame, selected_terms):
                 yaxis_title="",
                 height=max(350, len(df_plot) * 32),
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, use_container_width=True, key="corr_bar")
             st.caption("🟢 Positivo = crescem juntos | 🔴 Negativo = anticorrelação")
 
     # -----------------------------------------------------------------------
@@ -227,7 +227,7 @@ def render(df: pd.DataFrame, selected_terms):
             hovermode="x unified",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
-        st.plotly_chart(fig_extra, use_container_width=True)
+        st.plotly_chart(fig_extra, use_container_width=True, key="corr_extra")
 
     # -----------------------------------------------------------------------
     # Tabela completa + explicação
