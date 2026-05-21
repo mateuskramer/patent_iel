@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import scipy.sparse as sp
 import processador
 import tab_correlacao
+import tab_dicionario
 
 from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
@@ -400,6 +401,7 @@ tabs = st.tabs([
     "🏆 Ranking",
     "🌌 Esparsos",
     "🔮 Predição (TFT)",
+    "📚 Dicionário",
 ])
 
 # ── Tab 0: Similaridade ──────────────────────────────────────
@@ -771,3 +773,6 @@ with tabs[9]:
         st.warning(
             "⚠️ Nenhuma predição encontrada. Execute o script `patent_tft_pipeline.py` para gerar as previsões."
         )
+# ── Tab 10: Dicionário ───────────────────────────────────────
+with tabs[10]:
+    tab_dicionario.render(DB_CONFIG)
