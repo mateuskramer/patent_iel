@@ -10,7 +10,6 @@ import plotly.graph_objects as go
 import scipy.sparse as sp
 import processador
 import tab_correlacao
-import tab_dicionario
 
 from dotenv import load_dotenv
 from sklearn.metrics.pairwise import cosine_similarity
@@ -401,7 +400,6 @@ tabs = st.tabs([
     "🏆 Ranking",
     "🌌 Esparsos",
     "🔮 Predição (TFT)",
-    "📚 Dicionário",
 ])
 
 # ── Tab 0: Similaridade ──────────────────────────────────────
@@ -512,12 +510,44 @@ with tabs[3]:
 # ── Tab 4: Indicadores ───────────────────────────────────────
 with tabs[4]:
     st.markdown("### Métricas de Maturidade e Impacto")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Growth %",     f"{calc_growth(sel_term, terms_df):.2f}%")
-    c2.metric("Density",      calc_density(sel_term, terms_df))
-    c3.metric("Fusion",       calc_fusion(sel_term, terms_df))
-    c4.metric("Shift %",      f"{calc_shift(sel_term, terms_df):.2f}%")
-    c5.metric("Future Score", calc_future_score(sel_term, terms_df))
+
+    terms_indicadores = st.session_state.get("selected_terms", [sel_term])
+    if not terms_indicadores:
+        terms_indicadores = [sel_term]
+
+    colors_ind = ["#636EFA", "#EF553B", "#00CC96"]
+    indicadores = ["Growth %", "Density", "Fusion", "Shift %", "Future Score"]
+
+    # Tabela comparativa
+    rows_ind = []
+    for term in terms_indicadores:
+        rows_ind.append({
+            "Termo":        term,
+            "Growth %":     round(calc_growth(term, terms_df), 2),
+            "Density":      calc_density(term, terms_df),
+            "Fusion":       calc_fusion(term, terms_df),
+            "Shift %":      round(calc_shift(term, terms_df), 2),
+            "Future Score": calc_future_score(term, terms_df),
+        })
+    df_ind = pd.DataFrame(rows_ind)
+    st.dataframe(df_ind.set_index("Termo"), use_container_width=True)
+
+    # Gráfico radar comparativo
+    fig_radar = go.Figure()
+    for i, row in df_ind.iterrows():
+        fig_radar.add_trace(go.Scatterpolar(
+            r=[row["Growth %"], row["Density"], row["Fusion"], row["Shift %"], row["Future Score"]],
+            theta=indicadores,
+            fill="toself",
+            name=row["Termo"],
+            line=dict(color=colors_ind[i]),
+        ))
+    fig_radar.update_layout(
+        polar=dict(radialaxis=dict(visible=True)),
+        template="plotly_dark",
+        legend=dict(orientation="h", yanchor="bottom", y=1.1, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig_radar, use_container_width=True)
 
     st.info(f"""
     **Glossário de Indicadores:**
@@ -531,13 +561,29 @@ with tabs[4]:
 # ── Tab 5: Correlação (Lift/Jaccard/PMI) ─────────────────────
 with tabs[5]:
     st.markdown("### Análise Estatística de Correlação")
-    corr = term_correlations(sel_term, terms_df)
-    if not corr.empty:
-        st.dataframe(corr.head(20), use_container_width=True)
-        st.plotly_chart(
-            px.bar(corr.head(15), x="term", y="lift", color="jaccard", template="plotly_dark"),
-            use_container_width=True,
-        )
+
+    terms_corr = st.session_state.get("selected_terms", [sel_term])
+    if not terms_corr:
+        terms_corr = [sel_term]
+
+    for i, term in enumerate(terms_corr):
+        if len(terms_corr) > 1:
+            st.markdown(f"#### {term}")
+        corr = term_correlations(term, terms_df)
+        if not corr.empty:
+            st.dataframe(corr.head(20), use_container_width=True)
+            st.plotly_chart(
+                px.bar(
+                    corr.head(15), x="term", y="lift", color="jaccard",
+                    template="plotly_dark",
+                    title=f"Lift — {term}",
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info(f"Sem correlações para '{term}'.")
+        if i < len(terms_corr) - 1:
+            st.markdown("---")
 
     st.info("""
     **O que significam estas métricas?**
@@ -549,7 +595,7 @@ with tabs[5]:
 
 # ── Tab 6: Correlação Temporal (Pearson) ─────────────────────
 with tabs[6]:
-    tab_correlacao.render(terms_df, sel_term)
+    tab_correlacao.render(terms_df, st.session_state.get("selected_terms", [sel_term]))
 
 # ── Tab 7: Ranking ───────────────────────────────────────────
 with tabs[7]:
@@ -773,6 +819,3 @@ with tabs[9]:
         st.warning(
             "⚠️ Nenhuma predição encontrada. Execute o script `patent_tft_pipeline.py` para gerar as previsões."
         )
-# ── Tab 10: Dicionário ───────────────────────────────────────
-with tabs[10]:
-    tab_dicionario.render(DB_CONFIG)
