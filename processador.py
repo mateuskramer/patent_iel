@@ -134,7 +134,7 @@ def processar_local():
             topics = data.get("topics", [])
 
             for item in topics:
-                term = item['topic'].strip()
+                term = item['topic'].strip().lower
                 cur.execute("""
                     INSERT INTO term_dictionary (term, class, status)
                     VALUES (%s, 'technology', 'approved')
