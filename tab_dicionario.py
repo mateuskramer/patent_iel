@@ -6,18 +6,13 @@ Módulo chamado pelo dashboard.py via tab_dicionario.render(DB_CONFIG).
 Operações disponíveis:
   - Ver e filtrar termos
   - Adicionar novo termo
-  - Editar classe e status
   - Renomear termo (com aviso)
   - Deletar termo (com confirmação explícita)
 """
 
 import streamlit as st
 import psycopg2
-from psycopg2 import extras
 import pandas as pd
-
-CLASSES_VALIDAS  = ["technology"]
-STATUS_VALIDOS   = ["pending", "approved"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -32,7 +27,7 @@ def _load_dictionary(db_config) -> pd.DataFrame:
     conn = _get_conn(db_config)
     try:
         df = pd.read_sql_query(
-            "SELECT id, term, class, status, created_at FROM term_dictionary ORDER BY term",
+            "SELECT id, term, created_at FROM term_dictionary ORDER BY term",
             conn,
         )
         return df
@@ -50,18 +45,18 @@ def _count_patents(db_config, term_id: int) -> int:
         conn.close()
 
 
-def _add_term(db_config, term: str, classe: str, status: str) -> str:
+def _add_term(db_config, term: str) -> str:
     conn = _get_conn(db_config)
     try:
         cur = conn.cursor()
         cur.execute(
             """
             INSERT INTO term_dictionary (term, class, status)
-            VALUES (%s, %s, %s)
+            VALUES (%s, 'technology', 'approved')
             ON CONFLICT (term) DO NOTHING
             RETURNING id
             """,
-            (term.strip().lower(), classe, status),
+            (term.strip().lower(),),
         )
         result = cur.fetchone()
         conn.commit()
@@ -75,13 +70,13 @@ def _add_term(db_config, term: str, classe: str, status: str) -> str:
         conn.close()
 
 
-def _update_term(db_config, term_id: int, new_term: str, classe: str, status: str) -> str:
+def _update_term(db_config, term_id: int, new_term: str) -> str:
     conn = _get_conn(db_config)
     try:
         cur = conn.cursor()
         cur.execute(
-            "UPDATE term_dictionary SET term = %s, class = %s, status = %s WHERE id = %s",
-            (new_term.strip(), classe, status, term_id),
+            "UPDATE term_dictionary SET term = %s WHERE id = %s",
+            (new_term.strip(), term_id),
         )
         conn.commit()
         return "ok"
@@ -114,43 +109,31 @@ def _delete_term(db_config, term_id: int) -> str:
 def render(db_config: dict):
     st.subheader("📚 Manutenção do Dicionário de Termos")
 
-    # ── Recarrega dados ──────────────────────────────────────
     if st.button("🔄 Recarregar", key="dict_reload"):
         st.rerun()
 
     df = _load_dictionary(db_config)
 
-    # ── Filtros ──────────────────────────────────────────────
-    col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
-    busca  = col_f1.text_input("🔍 Buscar termo", key="dict_busca")
-    f_status = col_f2.selectbox("Status", ["Todos"] + STATUS_VALIDOS, key="dict_status")
-    f_classe = col_f3.selectbox("Classe", ["Todas"] + CLASSES_VALIDAS, key="dict_classe")
-
+    # ── Filtro ───────────────────────────────────────────────
+    busca = st.text_input("🔍 Buscar termo", key="dict_busca")
     df_view = df.copy()
     if busca:
         df_view = df_view[df_view["term"].str.contains(busca, case=False, na=False)]
-    if f_status != "Todos":
-        df_view = df_view[df_view["status"] == f_status]
-    if f_classe != "Todas":
-        df_view = df_view[df_view["class"] == f_classe]
 
     st.caption(f"{len(df_view)} termos encontrados de {len(df)} no total")
-    st.dataframe(df_view[["id", "term", "class", "status", "created_at"]], use_container_width=True)
+    st.dataframe(df_view[["id", "term", "created_at"]], use_container_width=True)
 
     st.markdown("---")
 
     # ── Seção: Adicionar ─────────────────────────────────────
     with st.expander("➕ Adicionar novo termo"):
-        c1, c2, c3 = st.columns([3, 1, 1])
-        new_term   = c1.text_input("Nome do termo", key="dict_new_term")
-        new_class  = c2.selectbox("Classe",  CLASSES_VALIDAS,  key="dict_new_class")
-        new_status = c3.selectbox("Status",  STATUS_VALIDOS,   key="dict_new_status")
+        new_term = st.text_input("Nome do termo", key="dict_new_term")
 
         if st.button("Adicionar", key="dict_add_btn"):
             if not new_term.strip():
                 st.warning("Digite um nome para o termo.")
             else:
-                result = _add_term(db_config, new_term, new_class, new_status)
+                result = _add_term(db_config, new_term)
                 if result == "ok":
                     st.success(f"✅ Termo '{new_term}' adicionado.")
                     st.rerun()
@@ -160,33 +143,20 @@ def render(db_config: dict):
                     st.error(f"Erro: {result}")
 
     # ── Seção: Editar ────────────────────────────────────────
-    with st.expander("✏️ Editar termo"):
+    with st.expander("✏️ Renomear termo"):
         term_options = df["term"].tolist()
-        edit_term_name = st.selectbox("Selecione o termo para editar", term_options, key="dict_edit_sel")
+        edit_term_name = st.selectbox("Selecione o termo para renomear", term_options, key="dict_edit_sel")
         row = df[df["term"] == edit_term_name].iloc[0]
+        edited_name = st.text_input("Novo nome", value=row["term"], key="dict_edit_name")
 
-        c1, c2, c3 = st.columns([3, 1, 1])
-        edited_name   = c1.text_input("Nome", value=row["term"], key="dict_edit_name")
-        edited_class  = c2.selectbox(
-            "Classe", CLASSES_VALIDAS,
-            index=CLASSES_VALIDAS.index(row["class"]) if row["class"] in CLASSES_VALIDAS else 0,
-            key="dict_edit_class",
-        )
-        edited_status = c3.selectbox(
-            "Status", STATUS_VALIDOS,
-            index=STATUS_VALIDOS.index(row["status"]) if row["status"] in STATUS_VALIDOS else 0,
-            key="dict_edit_status",
-        )
-
-        name_changed = edited_name.strip() != row["term"]
-        if name_changed:
+        if edited_name.strip() != row["term"]:
             st.warning(
-                "⚠️ Você está renomeando o termo. As associações com patentes são mantidas "
-                "(usam o ID interno), mas o nome visível em todo o sistema será alterado."
+                "⚠️ As associações com patentes são mantidas (usam o ID interno), "
+                "mas o nome visível em todo o sistema será alterado."
             )
 
-        if st.button("Salvar edição", key="dict_edit_btn"):
-            result = _update_term(db_config, int(row["id"]), edited_name, edited_class, edited_status)
+        if st.button("Salvar", key="dict_edit_btn"):
+            result = _update_term(db_config, int(row["id"]), edited_name)
             if result == "ok":
                 st.success("✅ Termo atualizado.")
                 st.rerun()
@@ -201,8 +171,8 @@ def render(db_config: dict):
         )
 
         del_term_name = st.selectbox("Selecione o termo para deletar", term_options, key="dict_del_sel")
-        del_row       = df[df["term"] == del_term_name].iloc[0]
-        n_patents     = _count_patents(db_config, int(del_row["id"]))
+        del_row = df[df["term"] == del_term_name].iloc[0]
+        n_patents = _count_patents(db_config, int(del_row["id"]))
 
         st.info(f"Este termo está associado a **{n_patents} patente(s)**.")
 
